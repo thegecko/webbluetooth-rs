@@ -1,0 +1,73 @@
+{
+  "name": "webbluetooth",
+  "description": "Node.js implementation of the Web Bluetooth Specification",
+  "license": "MIT",
+  "version": "7.0.0",
+  "main": "dist/index.js",
+  "browser": "dist/browser.js",
+  "author": "Rob Moran <rob@thegecko.org>",
+  "engines": {
+    "node": ">= 12.22.0 < 13 || >= 14.17.0 < 15 || >= 15.12.0 < 16 || >= 16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/thegecko/webbluetooth-rs.git"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "keywords": [
+    "web-bluetooth",
+    "webbluetooth",
+    "ble",
+    "bluetooth"
+  ],
+  "scripts": {
+    "clean": "git clean -fx ./dist ./target ./node_modules ./npm",
+    "artifacts": "napi artifacts",
+    "build": "napi build --platform --release",
+    "build:ts": "tsc",
+    "build:all": "npm run build && npm run build:ts",
+    "format": "cargo fmt",
+    "format:check": "cargo fmt -- --check",
+    "full-test": "mocha --timeout 10000 test/*.test.js",
+    "prepublishOnly": "napi prepublish -t npm",
+    "version": "node ./scripts/version.mjs && git add Cargo.toml",
+    "create-npm-dirs": "napi create-npm-dirs",
+    "docs": "typedoc"
+  },
+  "dependencies": {
+    "@types/web-bluetooth": "^0.0.21"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.7.0",
+    "mocha": "^11.7.6",
+    "typedoc": "^0.28.19",
+    "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "diff": "9.0.0",
+    "serialize-javascript": "7.0.5"
+  },
+  "napi": {
+    "binaryName": "webbluetooth",
+    "packageName": "@webbluetooth/webbluetooth",
+    "targets": [
+      "x86_64-pc-windows-msvc",
+      "x86_64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-gnu",
+      "i686-pc-windows-msvc",
+      "armv7-unknown-linux-gnueabihf",
+      "aarch64-apple-darwin",
+      "aarch64-unknown-linux-musl",
+      "aarch64-pc-windows-msvc"
+    ]
+  },
+  "files": [
+    "index.d.ts",
+    "index.js"
+  ]
+}
