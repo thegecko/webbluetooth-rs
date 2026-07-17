@@ -15,7 +15,10 @@ pub async fn getDevices() -> Result<Vec<BluetoothDevice>> {
     let manager = Manager::new().await.unwrap();
 
     // get the first bluetooth adapter
-    let adapters = manager.adapters().await.map_err(|err| Error::from_reason(err.to_string()))?;
+    let adapters = manager
+        .adapters()
+        .await
+        .map_err(|err| Error::from_reason(err.to_string()))?;
     let central = adapters.into_iter().nth(0).unwrap();
 
     // start scanning for devices
