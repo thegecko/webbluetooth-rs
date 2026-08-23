@@ -31,7 +31,7 @@
     "build:all": "npm run build && npm run build:ts",
     "format": "cargo fmt",
     "format:check": "cargo fmt -- --check",
-    "full-test": "mocha --timeout 10000 test/*.test.js",
+    "test": "mocha --timeout 10000 test/*.js",
     "prepublishOnly": "napi prepublish -t npm",
     "version": "node ./scripts/version.mjs && git add Cargo.toml",
     "create-npm-dirs": "napi create-npm-dirs",
