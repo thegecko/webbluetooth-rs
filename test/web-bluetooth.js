@@ -16,8 +16,8 @@ describe('adapter', () => {
         assert.equal(available, true);
     });
 
-    it('should list adapters', () => {
-        const adapters = getAdapters();
+    it('should list adapters', async () => {
+        const adapters = await getAdapters();
         assert.equal(adapters.length > 0, true);
     });
 });
