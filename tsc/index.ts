@@ -107,6 +107,7 @@ const deviceOwners = new WeakMap<NativeDevice, Bluetooth>();
 const deviceKeys = new WeakMap<NativeDevice, string>();
 const gattDevices = new WeakMap<NativeGATTServer, NativeDevice>();
 const gattConnected = new WeakMap<NativeGATTServer, boolean>();
+const pendingDisconnects = new WeakMap<NativeDevice, Promise<void>>();
 const serviceDevices = new WeakMap<NativeService, NativeDevice>();
 const characteristicServices = new WeakMap<NativeCharacteristic, NativeService>();
 const descriptorCharacteristics = new WeakMap<NativeDescriptor, NativeCharacteristic>();
@@ -236,6 +237,14 @@ const stopScan = (state: BluetoothState): void => {
     state.emitter.stopScan().catch(() => undefined);
 };
 
+const stopScanAsync = async (state: BluetoothState): Promise<void> => {
+    state.scanning = false;
+    await Promise.race([
+        state.emitter.stopScan().catch(() => undefined),
+        new Promise<void>(resolve => setTimeout(resolve, 1000)),
+    ]);
+};
+
 const cacheKey = (state: BluetoothState, device: NativeDevice): string => `${state.adapterIndex}:${device.id}`;
 
 const updateCachedDevice = (cached: NativeDevice, fresh: NativeDevice): void => {
@@ -269,27 +278,6 @@ const cacheDevice = (bluetooth: Bluetooth, fresh: NativeDevice): NativeDevice =>
     decorateDevice(bluetooth, fresh, key);
     state.deviceCache.set(key, fresh);
     return fresh;
-};
-
-const ensureLifecycle = (bluetooth: Bluetooth): void => {
-    const state = stateFor(bluetooth);
-    if (state.lifecycleStarted) {
-        return;
-    }
-    state.lifecycleStarted = true;
-    state.emitter.addConnect(state.adapterIndex, id => {
-        const device = state.deviceCache.get(`${state.adapterIndex}:${id}`);
-        if (device) {
-            device.gatt.connected = true;
-        }
-    }).catch(() => undefined);
-    state.emitter.addDisconnect(state.adapterIndex, id => {
-        const device = state.deviceCache.get(`${state.adapterIndex}:${id}`);
-        if (device && device.gatt.connected) {
-            dispatchDisconnect(bluetooth, device);
-        }
-    }).catch(() => undefined);
-    state.emitter.addServicesModified(state.adapterIndex, () => undefined).catch(() => undefined);
 };
 
 const dispatchDisconnect = (bluetooth: Bluetooth, device: NativeDevice): void => {
@@ -488,10 +476,7 @@ const patchNativePrototypes = (): void => {
         if (!device) {
             throw new Error('connect error: device not found');
         }
-        const bluetooth = deviceOwners.get(device);
-        if (bluetooth) {
-            ensureLifecycle(bluetooth);
-        }
+        await pendingDisconnects.get(device);
         await this.nativeConnect();
         this.connected = true;
         return this;
@@ -505,7 +490,15 @@ const patchNativePrototypes = (): void => {
             this.connected = false;
         }
         try {
-            this.nativeDisconnect().catch(() => undefined);
+            const pending = this.nativeDisconnect().catch(() => undefined);
+            if (device) {
+                pendingDisconnects.set(device, pending);
+                pending.finally(() => {
+                    if (pendingDisconnects.get(device) === pending) {
+                        pendingDisconnects.delete(device);
+                    }
+                }).catch(() => undefined);
+            }
         } catch {
             // Public disconnect is void/best-effort.
         }
@@ -724,8 +717,7 @@ class Bluetooth extends EventTarget {
                 }
                 settled = true;
                 clearTimeout(timer);
-                stopScan(state);
-                fn();
+                void stopScanAsync(state).then(fn);
             };
             const select = (device: NativeDevice): void => {
                 const services = [
@@ -775,8 +767,7 @@ class Bluetooth extends EventTarget {
                 }
                 settled = true;
                 clearTimeout(timer);
-                stopScan(state);
-                fn();
+                void stopScanAsync(state).then(fn);
             };
             const timer = setTimeout(() => finish(() => resolve([...devices.values()] as unknown as BluetoothDevice[])), state.scanTime * 1000);
 

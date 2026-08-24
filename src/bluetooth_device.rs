@@ -12,6 +12,7 @@ use napi::{Error, Result};
 use napi_derive::napi;
 use std::sync::{Mutex, MutexGuard};
 use tokio::task::JoinHandle;
+use tokio::time::{timeout, Duration};
 
 fn napi_error(prefix: &str, err: impl ToString) -> Error {
     Error::from_reason(format!("{prefix} error: {}", err.to_string()))
@@ -190,11 +191,6 @@ impl BluetoothRemoteGATTCharacteristic {
         &self,
         callback: ThreadsafeFunction<Vec<u8>, (), Vec<u8>, napi::Status, false>,
     ) -> Result<()> {
-        self.peripheral
-            .subscribe(&self.characteristic)
-            .await
-            .map_err(|err| napi_error("startNotifications", err))?;
-
         {
             let task = notification_task_guard(&self.notification_task);
             if task.as_ref().is_some_and(|task| !task.is_finished()) {
@@ -202,26 +198,67 @@ impl BluetoothRemoteGATTCharacteristic {
             }
         }
 
-        let mut notifications = self
-            .peripheral
-            .notifications()
-            .await
-            .map_err(|err| napi_error("startNotifications", err))?;
+        let peripheral = self.peripheral.clone();
+        let notifications_task = tokio::spawn(async move { peripheral.notifications().await });
+        let mut notifications = match timeout(Duration::from_secs(5), notifications_task).await {
+            Ok(joined) => joined
+                .map_err(|err| {
+                    Error::from_reason(format!(
+                        "startNotifications error: notifications task failed: {err}"
+                    ))
+                })?
+                .map_err(|err| napi_error("startNotifications", err))?,
+            Err(_) => {
+                return Err(Error::from_reason(
+                    "startNotifications error: notifications stream timed out",
+                ));
+            }
+        };
         let service_uuid = self.characteristic.service_uuid;
         let characteristic_uuid = self.characteristic.uuid;
-        let mut task = notification_task_guard(&self.notification_task);
-        *task = Some(tokio::spawn(async move {
-            while let Some(ValueNotification {
-                uuid,
-                service_uuid: notification_service_uuid,
-                value,
-            }) = notifications.next().await
-            {
-                if uuid == characteristic_uuid && notification_service_uuid == service_uuid {
-                    callback.call(value, ThreadsafeFunctionCallMode::NonBlocking);
+        {
+            let mut task = notification_task_guard(&self.notification_task);
+            *task = Some(tokio::spawn(async move {
+                while let Some(ValueNotification {
+                    uuid,
+                    service_uuid: notification_service_uuid,
+                    value,
+                }) = notifications.next().await
+                {
+                    if uuid == characteristic_uuid && notification_service_uuid == service_uuid {
+                        callback.call(value, ThreadsafeFunctionCallMode::NonBlocking);
+                    }
+                }
+            }));
+        }
+
+        let peripheral = self.peripheral.clone();
+        let characteristic = self.characteristic.clone();
+        let subscribe_task =
+            tokio::spawn(async move { peripheral.subscribe(&characteristic).await });
+        match timeout(Duration::from_secs(5), subscribe_task).await {
+            Ok(joined) => {
+                if let Err(err) = joined.map_err(|err| {
+                    Error::from_reason(format!(
+                        "startNotifications error: subscribe task failed: {err}"
+                    ))
+                })? {
+                    if let Some(task) = notification_task_guard(&self.notification_task).take() {
+                        task.abort();
+                    }
+                    return Err(napi_error("startNotifications", err));
                 }
             }
-        }));
+            Err(_) => {
+                if let Some(task) = notification_task_guard(&self.notification_task).take() {
+                    task.abort();
+                }
+                return Err(Error::from_reason(
+                    "startNotifications error: subscribe timed out",
+                ));
+            }
+        }
+
         Ok(())
     }
 
