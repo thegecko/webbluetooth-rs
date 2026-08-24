@@ -1,6 +1,6 @@
 # Changelog
 
-## [7.0.0] - 2026-xx-xx
+## [7.0.0] - 2026-08-24
 
 ### Changed
 - Initial release of the rust-based webbluetooth library
