@@ -314,11 +314,6 @@ impl BluetoothRemoteGATTServer {
     }
 
     #[napi]
-    pub fn nativeRefreshFrom(&mut self, device: &BluetoothDevice) {
-        self.peripheral = device.peripheral.clone();
-    }
-
-    #[napi]
     pub async unsafe fn nativeConnect(&mut self) -> Result<()> {
         if !self
             .peripheral
@@ -343,9 +338,8 @@ impl BluetoothRemoteGATTServer {
     }
 
     #[napi]
-    pub async unsafe fn nativeDisconnect(&mut self) -> Result<()> {
+    pub async fn nativeDisconnect(&self) -> Result<()> {
         let _ = self.peripheral.disconnect().await;
-        self.connected = false;
         Ok(())
     }
 

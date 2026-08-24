@@ -29,7 +29,6 @@ type NativeGATTServer = NativeBluetoothRemoteGATTServer & EventTarget & {
     device: NativeDevice;
     nativeConnect: () => Promise<void>;
     nativeDisconnect: () => Promise<void>;
-    nativeRefreshFrom: (device: NativeDevice) => void;
     nativeGetPrimaryServices: () => Promise<NativeService[]>;
     connect: () => Promise<NativeGATTServer>;
     disconnect: () => void;
@@ -107,6 +106,7 @@ const eventTargets = new WeakMap<object, EventTarget>();
 const deviceOwners = new WeakMap<NativeDevice, Bluetooth>();
 const deviceKeys = new WeakMap<NativeDevice, string>();
 const gattDevices = new WeakMap<NativeGATTServer, NativeDevice>();
+const gattConnected = new WeakMap<NativeGATTServer, boolean>();
 const serviceDevices = new WeakMap<NativeService, NativeDevice>();
 const characteristicServices = new WeakMap<NativeCharacteristic, NativeService>();
 const descriptorCharacteristics = new WeakMap<NativeDescriptor, NativeCharacteristic>();
@@ -135,6 +135,29 @@ const defineReadonly = (target: object, key: string, value: unknown): void => {
         enumerable: true,
         writable: false,
         value,
+    });
+};
+
+const defineConnectedAccessor = (gatt: NativeGATTServer): void => {
+    if (!gattConnected.has(gatt)) {
+        let connected = false;
+        try {
+            connected = Boolean((gatt as unknown as { connected?: boolean }).connected);
+        } catch {
+            connected = false;
+        }
+        gattConnected.set(gatt, connected);
+    }
+
+    Object.defineProperty(gatt, 'connected', {
+        configurable: true,
+        enumerable: true,
+        get(): boolean {
+            return gattConnected.get(gatt) ?? false;
+        },
+        set(value: boolean): void {
+            gattConnected.set(gatt, value);
+        },
     });
 };
 
@@ -234,7 +257,12 @@ const cacheDevice = (bluetooth: Bluetooth, fresh: NativeDevice): NativeDevice =>
     const cached = state.deviceCache.get(key);
     if (cached) {
         updateCachedDevice(cached, fresh);
-        cached.gatt.nativeRefreshFrom(fresh);
+        if (!cached.gatt.connected) {
+            const nativeGattFactory = (fresh as unknown as { gatt: () => NativeGATTServer }).gatt;
+            const gatt = nativeGattFactory.call(fresh);
+            decorateGatt(cached, gatt);
+            defineReadonly(cached, 'gatt', gatt);
+        }
         return cached;
     }
 
@@ -333,6 +361,7 @@ const decorateDevice = (bluetooth: Bluetooth, device: NativeDevice, key: string)
 const decorateGatt = (device: NativeDevice, gatt: NativeGATTServer): void => {
     patchEventTarget(Object.getPrototypeOf(gatt));
     gattDevices.set(gatt, device);
+    defineConnectedAccessor(gatt);
     defineReadonly(gatt, 'device', device);
     if (decorated.has(gatt)) {
         return;
@@ -475,7 +504,11 @@ const patchNativePrototypes = (): void => {
         } else {
             this.connected = false;
         }
-        this.nativeDisconnect().catch(() => undefined);
+        try {
+            this.nativeDisconnect().catch(() => undefined);
+        } catch {
+            // Public disconnect is void/best-effort.
+        }
     };
     gattPrototype.getPrimaryServices = async function getPrimaryServices(this: NativeGATTServer, service?: BluetoothServiceUUID): Promise<NativeService[]> {
         if (!this.connected) {
@@ -705,18 +738,22 @@ class Bluetooth extends EventTarget {
             const timer = setTimeout(() => finish(() => reject('requestDevice error: no devices found')), state.scanTime * 1000);
 
             state.emitter.startScan(state.adapterIndex, found => {
-                if (settled) {
-                    return;
-                }
-                const device = cacheDevice(this, found as NativeDevice);
-                const key = deviceKeys.get(device);
-                if (!key || presented.has(key) || !matchesRequestOptions(device, options)) {
-                    return;
-                }
-                presented.add(key);
-                const selectFn = (): void => select(device);
-                if (!state.deviceFound || state.deviceFound(device, selectFn) === true) {
-                    select(device);
+                try {
+                    if (settled) {
+                        return;
+                    }
+                    const device = cacheDevice(this, found as NativeDevice);
+                    const key = deviceKeys.get(device);
+                    if (!key || presented.has(key) || !matchesRequestOptions(device, options)) {
+                        return;
+                    }
+                    presented.add(key);
+                    const selectFn = (): void => select(device);
+                    if (!state.deviceFound || state.deviceFound(device, selectFn) === true) {
+                        select(device);
+                    }
+                } catch (error) {
+                    finish(() => reject(error));
                 }
             }).catch(error => finish(() => reject(error)));
         });
@@ -744,16 +781,20 @@ class Bluetooth extends EventTarget {
             const timer = setTimeout(() => finish(() => resolve([...devices.values()] as unknown as BluetoothDevice[])), state.scanTime * 1000);
 
             state.emitter.startScan(state.adapterIndex, found => {
-                if (settled) {
-                    return;
-                }
-                const device = cacheDevice(this, found as NativeDevice);
-                const key = deviceKeys.get(device);
-                if (!key) {
-                    return;
-                }
-                if (state.allowAllDevices || state.allowedDevices.has(key)) {
-                    devices.set(key, device);
+                try {
+                    if (settled) {
+                        return;
+                    }
+                    const device = cacheDevice(this, found as NativeDevice);
+                    const key = deviceKeys.get(device);
+                    if (!key) {
+                        return;
+                    }
+                    if (state.allowAllDevices || state.allowedDevices.has(key)) {
+                        devices.set(key, device);
+                    }
+                } catch (error) {
+                    finish(() => reject(error));
                 }
             }).catch(error => finish(() => reject(error)));
         });
