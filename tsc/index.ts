@@ -102,7 +102,7 @@ interface BluetoothState {
 
 const DEFAULT_SCAN_TIME = 10.24;
 const states = new WeakMap<Bluetooth, BluetoothState>();
-const eventTargets = new WeakMap<object, EventTarget>();
+const eventListeners = new WeakMap<object, Map<string, Set<EventListenerOrEventListenerObject>>>();
 const deviceOwners = new WeakMap<NativeDevice, Bluetooth>();
 const deviceKeys = new WeakMap<NativeDevice, string>();
 const gattDevices = new WeakMap<NativeGATTServer, NativeDevice>();
@@ -114,14 +114,23 @@ const descriptorCharacteristics = new WeakMap<NativeDescriptor, NativeCharacteri
 const decorated = new WeakSet<object>();
 const activeNotifications = new WeakMap<NativeDevice, Set<NativeCharacteristic>>();
 
-const targetFor = (target: object): EventTarget => {
-    let eventTarget = eventTargets.get(target);
-    if (!eventTarget) {
-        eventTarget = new EventTarget();
-        eventTargets.set(target, eventTarget);
+const listenersFor = (target: object): Map<string, Set<EventListenerOrEventListenerObject>> => {
+    let listeners = eventListeners.get(target);
+    if (!listeners) {
+        listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+        eventListeners.set(target, listeners);
     }
-    return eventTarget;
+    return listeners;
 };
+
+const eventForTarget = (event: Event, target: object): Event => new Proxy(event, {
+    get(source, property, receiver) {
+        if (property === 'target' || property === 'currentTarget') {
+            return target;
+        }
+        return Reflect.get(source, property, receiver);
+    },
+});
 
 const defineReadonly = (target: object, key: string, value: unknown): void => {
     const descriptor = Object.getOwnPropertyDescriptor(target, key);
@@ -172,19 +181,44 @@ const patchEventTarget = (prototype: object): void => {
         addEventListener: {
             configurable: true,
             value(this: object, type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions): void {
-                targetFor(this).addEventListener(type, listener, options);
+                void options;
+                if (!listener) {
+                    return;
+                }
+                let listeners = listenersFor(this).get(type);
+                if (!listeners) {
+                    listeners = new Set<EventListenerOrEventListenerObject>();
+                    listenersFor(this).set(type, listeners);
+                }
+                listeners.add(listener);
             },
         },
         removeEventListener: {
             configurable: true,
             value(this: object, type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions): void {
-                targetFor(this).removeEventListener(type, listener, options);
+                void options;
+                if (!listener) {
+                    return;
+                }
+                listenersFor(this).get(type)?.delete(listener);
             },
         },
         dispatchEvent: {
             configurable: true,
             value(this: object, event: Event): boolean {
-                return targetFor(this).dispatchEvent(event);
+                const listeners = listenersFor(this).get(event.type);
+                if (!listeners) {
+                    return true;
+                }
+                const targetedEvent = eventForTarget(event, this);
+                for (const listener of [...listeners]) {
+                    if (typeof listener === 'function') {
+                        listener.call(this, targetedEvent);
+                    } else {
+                        listener.handleEvent(targetedEvent);
+                    }
+                }
+                return !event.defaultPrevented;
             },
         },
     });
@@ -286,7 +320,7 @@ const dispatchDisconnect = (bluetooth: Bluetooth, device: NativeDevice): void =>
     const event = new CustomEvent('gattserverdisconnected', { bubbles: true });
     device.dispatchEvent(event);
     bluetooth.dispatchEvent(new CustomEvent('gattserverdisconnected', { bubbles: true }));
-    eventTargets.set(device, new EventTarget());
+    eventListeners.delete(device);
     const state = stateFor(bluetooth);
     state.emitter.removeConnect().catch(() => undefined);
     state.emitter.removeDisconnect().catch(() => undefined);

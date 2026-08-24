@@ -51,7 +51,8 @@ yarn add webbluetooth
 
 ## Examples
 
-Use the following examples to kickstart your development and once you have a desired device, use the APIs below to interact with it.
+Use the following examples to kickstart your development or see the [examples](https://github.com/thegecko/webbluetooth-rs/tree/main/examples/) in the source code.
+Once you have a desired device, use the APIs below to interact with it.
 
 ### Using the default bluetooth instance
 
