@@ -38,7 +38,7 @@
     "docs": "typedoc"
   },
   "dependencies": {
-    "@types/web-bluetooth": "^0.0.21"
+    "@types/web-bluetooth": "^0.0.22"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.7.0",
